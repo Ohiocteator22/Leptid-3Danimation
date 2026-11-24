@@ -3,6 +3,11 @@
 #include <cstdio>
 #include <cstring>
 
+#if defined(_MSC_VER) // MSVC names the pipe-to-process functions _popen/_pclose
+#define popen _popen
+#define pclose _pclose
+#endif
+
 namespace leptid {
 
 namespace {

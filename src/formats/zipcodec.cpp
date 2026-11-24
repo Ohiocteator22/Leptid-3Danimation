@@ -1,8 +1,14 @@
 // Leptid — DEFLATE + CRC32 + ZIP implementation (own code, no external deps).
 #include "formats/zipcodec.h"
 #include <cstring>
+#include <cstddef>
 
 namespace leptid {
+
+#if defined(_MSC_VER)
+// MSVC has no POSIX ssize_t; every use here fits std::ptrdiff_t.
+typedef std::ptrdiff_t ssize_t;
+#endif
 
 // ---------------- CRC-32 (IEEE 802.3, reflected) ----------------
 uint32_t crc32(const uint8_t* data, size_t len, uint32_t seed) {

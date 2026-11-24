@@ -7,6 +7,11 @@
 #include <cstdlib>
 #include <filesystem>
 
+#if defined(_MSC_VER) // MSVC names the pipe-to-process functions _popen/_pclose
+#define popen _popen
+#define pclose _pclose
+#endif
+
 namespace {
 void ensureDirRecursive(const std::string& dir) {
     if (dir.empty()) return;
