@@ -5,18 +5,13 @@
 #include "formats/pngio.h"
 #include <cstdio>
 #include <cstdlib>
-#include <sys/stat.h>
+#include <filesystem>
 
 namespace {
 void ensureDirRecursive(const std::string& dir) {
     if (dir.empty()) return;
-    for (size_t i = 1; i <= dir.size(); ++i) {
-        if (i == dir.size() || dir[i] == '/') {
-            std::string path = dir.substr(0, i);
-            struct stat st;
-            if (stat(path.c_str(), &st) != 0) mkdir(path.c_str(), 0755);
-        }
-    }
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec); // cross-platform (MSVC/MinGW/POSIX)
 }
 } // namespace
 

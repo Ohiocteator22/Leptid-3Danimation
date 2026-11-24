@@ -5,8 +5,8 @@
 #include "rig/charser.h"
 #include "model/audio.h"
 #include "ai/ollama.h"
-#include <dirent.h>
-#include <sys/stat.h>
+#include <algorithm>
+#include <filesystem>
 
 namespace leptid {
 
@@ -14,22 +14,16 @@ extern const char* kVersion;
 
 static std::vector<std::string> listDir(const std::string& path) {
     std::vector<std::string> out;
-    DIR* d = opendir(path.c_str());
-    if (!d) return out;
-    struct dirent* e;
-    while ((e = readdir(d)) != nullptr) {
-        std::string n = e->d_name;
-        if (n == ".") continue;
-        out.push_back(n);
-    }
-    closedir(d);
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(path, ec))
+        out.push_back(e.path().filename().string());
+    if (ec) return {};
     std::sort(out.begin(), out.end());
     return out;
 }
 
 static bool isDir(const std::string& p) {
-    struct stat st;
-    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+    return std::filesystem::is_directory(p);
 }
 
 } // namespace leptid

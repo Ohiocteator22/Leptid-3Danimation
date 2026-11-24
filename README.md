@@ -88,13 +88,14 @@ Two options:
 # in an MSYS2/mingw64 shell
 pacman -S mingw-w64-x86_64-gcc make
 make                # same Makefile, produces bin\leptid.exe
+                    # (links -lws2_32 / -mwindows automatically on Windows)
 ```
 
 **Option B — CMake + Visual Studio (MSVC)**
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release    # produces build\leptid.exe
+cmake --build build --config Release    # produces build\Release\leptid.exe
 ```
 
 (See `CMakeLists.txt` — MSVC needs C++17; no other libraries.)
@@ -124,8 +125,13 @@ via `packaging/leptid.rc`:
 
 1. *MinGW-w64 (MSYS2)* — run `packaging/build_windows.bat`, or by hand:
    ```sh
-   windres packaging/leptid.rc -O coff -o leptid.res.obj
-   g++ -std=c++17 -O2 -Isrc -Ithird_party/stb -o bin/leptid.exe        src/app/*.cpp src/core/*.cpp src/formats/*.cpp src/model/*.cpp        src/rig/*.cpp src/export/*.cpp src/ui/*.cpp        src/platform/platform_win32.cpp src/platform/platform_stub.cpp        src/ai/*.cpp bin/fontdata.cpp bin/assets.cpp leptid.res.obj        -static -static-libgcc -static-libstdc++ -lgdi32 -luser32
+   windres packaging/leptid.rc -O coff -o bin/leptid.res.obj
+   g++ -std=c++17 -O2 -Isrc -Ithird_party/stb -o bin/leptid.exe \
+     src/app/*.cpp src/core/*.cpp src/formats/*.cpp src/model/*.cpp \
+     src/rig/*.cpp src/export/*.cpp src/ui/*.cpp \
+     src/platform/platform_win32.cpp src/ai/*.cpp \
+     bin/fontdata.cpp bin/assets.cpp bin/leptid.res.obj \
+     -static -static-libgcc -static-libstdc++ -lgdi32 -luser32 -lws2_32 -mwindows
    ```
    Result: one portable `leptid.exe` (no DLLs, icon in Explorer/taskbar).
 2. *MSVC* — `cmake -B build && cmake --build build --config Release` links
@@ -139,7 +145,7 @@ into an `.app` bundle (`Contents/Resources/leptid.icns` + a matching
 
 ```sh
 make tests && ./bin/leptid_tests
-# → leptid tests: 2437 passed, 0 failed
+# → leptid tests: 2480 passed, 0 failed
 ```
 
 The suite covers the raster engine, the DEFLATE/ZIP/JSON stack (including

@@ -11,6 +11,13 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if (MSVC)
+    # Sources are UTF-8 (em-dashes and middle dots in comments and UI
+    # strings); MSVC defaults to the active code page and garbles or even
+    # mis-tokenizes them unless told the source and execution charset.
+    add_compile_options(/utf-8 /W3)
+endif()
+
 # 1) generate the embedded font sources (bin2cpp step, same as the Makefile)
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated)
 add_executable(bin2cpp tools/bin2cpp.cpp)
@@ -48,6 +55,11 @@ add_executable(leptid ${APP_SRCS} src/app/main.cpp ${FONTCPP} ${ASSETCPP})
 add_dependencies(leptid generated_sources)
 if (WIN32)
     target_sources(leptid PRIVATE packaging/leptid.rc)
+    # leptid.rc references assets\icons\leptid.ico with a relative path;
+    # both RC.exe and windres resolve resource files against the include
+    # path, so hand them the source root and the icon is found regardless
+    # of the build working directory.
+    target_include_directories(leptid PRIVATE ${CMAKE_SOURCE_DIR})
 endif()
 target_include_directories(leptid PRIVATE src third_party/stb)
 

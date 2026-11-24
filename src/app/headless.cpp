@@ -2,22 +2,14 @@
 #include "export/exporter.h"
 #include "model/lepser.h"
 #include <cstdio>
-#include <sys/stat.h>
+#include <filesystem>
 
 namespace leptid {
 
 static void ensureDir(const std::string& dir) {
     if (dir.empty()) return;
-    std::string path;
-    for (size_t i = 0; i <= dir.size(); ++i) {
-        if (i == dir.size() || dir[i] == '/') {
-            path = dir.substr(0, i);
-            if (!path.empty()) {
-                struct stat st;
-                if (stat(path.c_str(), &st) != 0) mkdir(path.c_str(), 0755);
-            }
-        }
-    }
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec); // cross-platform (MSVC/MinGW/POSIX)
 }
 
 int runHeadless(const std::string& project, const std::string& pngDir,

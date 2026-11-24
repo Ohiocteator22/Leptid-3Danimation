@@ -5,8 +5,6 @@
 #include "rig/ik.h"
 #include <cmath>
 #include <cstring>
-#include <dirent.h>
-#include <sys/stat.h>
 
 namespace leptid_embed {
 extern const unsigned char leptid_icon_256_png[];

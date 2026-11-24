@@ -18,6 +18,16 @@ ifeq ($(UNAME),Linux)
   endif
 endif
 
+# Windows (MSYS2/MinGW): the Win32 backend is active under _WIN32; link the
+# sockets lib used by the Ollama client's Winsock2 shim, and suppress the
+# console window that would otherwise sit behind the GUI.
+W32_LIBS    :=
+W32_LDFLAGS :=
+ifeq ($(findstring MINGW,$(UNAME)),MINGW)
+  W32_LIBS    := -lws2_32
+  W32_LDFLAGS := -mwindows
+endif
+
 APP_SRCS   = $(filter-out src/app/main.cpp,$(shell find src -name '*.cpp' | sort))
 GUI_MAIN   = src/app/main.cpp
 TEST_SRCS  = $(shell find tests -name '*.cpp' | sort)
@@ -53,14 +63,14 @@ $(ASSETCPP): $(BIN)/bin2cpp $(ASSETS) | $(BIN)
 
 $(BIN)/leptid: $(APP_SRCS) $(GUI_MAIN) $(FONTCPP) $(ASSETCPP)
 	@mkdir -p $(BIN)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(X11_CFLAGS) -o $@ $(APP_SRCS) $(GUI_MAIN) $(FONTCPP) $(ASSETCPP) $(X11_LIBS) $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(X11_CFLAGS) -o $@ $(APP_SRCS) $(GUI_MAIN) $(FONTCPP) $(ASSETCPP) $(X11_LIBS) $(W32_LIBS) $(LDFLAGS) $(W32_LDFLAGS)
 
 tests: $(BIN)/leptid_tests
 
 ifneq ($(strip $(TEST_SRCS)),)
 $(BIN)/leptid_tests: $(APP_SRCS) $(TEST_SRCS) $(FONTCPP) $(ASSETCPP)
 	@mkdir -p $(BIN)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(X11_CFLAGS) -o $@ $(APP_SRCS) $(TEST_SRCS) $(FONTCPP) $(ASSETCPP) $(X11_LIBS) $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(X11_CFLAGS) -o $@ $(APP_SRCS) $(TEST_SRCS) $(FONTCPP) $(ASSETCPP) $(X11_LIBS) $(W32_LIBS) $(LDFLAGS) $(W32_LDFLAGS)
 endif
 
 run: $(BIN)/leptid
