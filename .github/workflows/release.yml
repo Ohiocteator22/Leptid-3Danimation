@@ -1,0 +1,142 @@
+# Leptid — release workflow.
+#
+# Triggers on a version tag push (vMAJOR.MINOR.PATCH) and produces release
+# artifacts for the three platforms, then creates the GitHub Release:
+#
+#   git tag v0.1.3 && git push origin v0.1.3
+#
+# How it maps to the repo:
+#   * CMakeLists.txt + cmake/embed_assets.cmake + tools/bin2cpp.cpp
+#       — one CMake configure/build for every OS (fonts + brush tips + icons
+#         are embedded at build time; no checked-in generated sources needed).
+#   * tools/patch_version.py
+#       — stamps the tag version into src/core/version.cpp and
+#         packaging/leptid.rc before building (exe metadata, --help banner).
+#   * packaging/leptid.rc + assets/icons/leptid.ico
+#       — icon + version info compiled into the Windows exe (RC via MSVC).
+#   * tests/ (leptid_tests) — full suite runs on every platform.
+#   * src/app/main.cpp --demo — headless smoke test of the render/export
+#     pipeline (works even where no display backend exists, e.g. macOS).
+
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch: {}   # manual run for testing the pipeline itself
+
+permissions:
+  contents: write         # required to create the GitHub Release
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-latest
+            pkg: tar.gz
+          - name: macos-universal
+            os: macos-latest
+            pkg: tar.gz
+          - name: windows-x64
+            os: windows-latest
+            pkg: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux — install X11 dev libraries (GUI backend)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev pkg-config
+
+      - name: Stamp version from tag (${{ github.ref_name }})
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            python3 tools/patch_version.py "${GITHUB_REF_NAME#v}"
+          else
+            echo "not a version tag (manual run) — keeping the checked-in version"
+          fi
+
+      - name: Configure (CMake, Release)
+        shell: bash
+        run: >-
+          cmake -B build-ci -DCMAKE_BUILD_TYPE=Release
+          ${{ runner.os == 'macOS' && '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"' || '' }}
+
+      - name: Build
+        shell: bash
+        run: cmake --build build-ci --config Release --parallel 4
+
+      - name: Run test suite (2480 checks)
+        shell: bash
+        run: ./build-ci/leptid_tests
+
+      - name: Headless demo smoke test (render + export pipeline)
+        shell: bash
+        run: ./build-ci/leptid --demo /tmp/smoke.lep --gif /tmp/smoke.gif
+
+      # ---- Linux: GUI binary + zero-dependency static single-file build ----
+      - name: Linux — build static single-file binary
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          make -j4 static
+          mkdir -p dist/leptid-linux-x64
+          cp build-ci/leptid dist/leptid-linux-x64/leptid
+          cp bin/leptid-static dist/leptid-linux-x64/leptid-linux-x64-static
+          cp README.md MANUAL.md LICENSE dist/leptid-linux-x64/
+          cp demo/hello_leptid.lep dist/leptid-linux-x64/
+          tar -czf leptid-${GITHUB_REF_NAME}-linux-x64.tar.gz -C dist leptid-linux-x64
+
+      # ---- macOS: universal (arm64 + x86_64) headless build ----
+      - name: macOS — package
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p dist/leptid-macos-universal
+          cp build-ci/leptid dist/leptid-macos-universal/leptid
+          cp README.md MANUAL.md LICENSE dist/leptid-macos-universal/
+          cp demo/hello_leptid.lep dist/leptid-macos-universal/
+          tar -czf leptid-${GITHUB_REF_NAME}-macos-universal.tar.gz -C dist leptid-macos-universal
+
+      # ---- Windows: portable exe (static CRT, icon + version from the .rc) ----
+      - name: Windows — package
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist/leptid-windows-x64
+          cp build-ci/Release/leptid.exe dist/leptid-windows-x64/leptid.exe
+          cp README.md MANUAL.md LICENSE dist/leptid-windows-x64/
+          cp demo/hello_leptid.lep dist/leptid-windows-x64/
+          7z a leptid-${GITHUB_REF_NAME}-windows-x64.zip ./dist/leptid-windows-x64
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: leptid-${{ github.ref_name }}-*
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')   # skip for manual runs
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Publish release with the three archives
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*
