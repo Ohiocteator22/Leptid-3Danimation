@@ -21,7 +21,14 @@ int main(int argc, char** argv) {
         printf("%u,", (unsigned)buf[i]);
     }
     printf("\n};\n");
-    printf("extern const size_t %s_len = %ld;\n", argv[2], n);
+    // NOTE: the length symbol is a plain (non-const) `unsigned int` and MUST
+    // stay declared exactly that way in every consumer (ui.cpp/ui.h, brush.cpp,
+    // editor.cpp, platform_x11.cpp). MSVC encodes the type into variable
+    // symbols — a `const size_t` definition against an `extern const unsigned`
+    // declaration mangles differently and fails with LNK2019 (the Linux/macOS
+    // linkers do not mangle variable types, which is why it only broke on
+    // Windows). Non-const also guarantees MSVC emits storage for it.
+    printf("extern unsigned int %s_len = %ld;\n", argv[2], n);
     printf("}\n");
     free(buf);
     return 0;

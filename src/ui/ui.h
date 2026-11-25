@@ -10,9 +10,9 @@ namespace leptid {
 // embedded DejaVu fonts (generated into bin/fontdata.cpp by the build)
 namespace embed {
 extern const unsigned char DejaVuSans_font[];
-extern const unsigned DejaVuSans_font_len;
+extern unsigned int DejaVuSans_font_len;
 extern const unsigned char DejaVuSansBold_font[];
-extern const unsigned DejaVuSansBold_font_len;
+extern unsigned int DejaVuSansBold_font_len;
 }
 
 // Dark theme palette

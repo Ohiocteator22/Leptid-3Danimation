@@ -8,7 +8,7 @@
 
 namespace leptid_embed {
 extern const unsigned char leptid_icon_256_png[];
-extern const unsigned leptid_icon_256_png_len;
+extern unsigned int leptid_icon_256_png_len;
 }
 
 namespace leptid {

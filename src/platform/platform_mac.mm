@@ -5,6 +5,12 @@
 // Structure mirrors platform_x11.cpp / platform_win32.cpp: one NSWindow with a
 // custom NSView that blits the RGBA framebuffer (drawRect), a manual event pump
 // inside pollEvents(), and the same InputEvent mapping as the other backends.
+//
+// IMPORTANT (from the first CI run): Objective-C @interface/@implementation
+// blocks may ONLY appear at global scope — they must NOT sit inside a C++
+// namespace ("Objective-C declarations may only appear in global scope").
+// The ObjC classes below are global; only MacWindow (plain C++) lives in
+// namespace leptid. Compiled with ARC (set in CMakeLists).
 #ifdef LEPTID_HAS_COCOA
 
 #include "platform/platform.h"
@@ -13,13 +19,15 @@
 #include <cstring>
 #include <vector>
 
-namespace leptid {
+// The global-scope ObjC classes below handle input and draw using the editor's
+// types; this using-directive keeps their bodies readable.
+using namespace leptid;
 
-namespace {
+// --- helpers (global scope, internal linkage) --------------------------------
 
 // Hardware keycode -> Key (specials first, then a QWERTY letter table —
 // Apple's letter keycodes are NOT contiguous across rows).
-Key mapKeyCode(unsigned short kc) {
+static Key mapKeyCode(unsigned short kc) {
     switch (kc) {
         case 49: return Key::Space;
         case 123: return Key::Left;
@@ -68,6 +76,8 @@ static InputEvent mouseEvent(InputEvent::Type t, NSEvent* ev, int button) {
     return e;
 }
 
+// --- ObjC classes (global scope) ----------------------------------------------
+
 // Window delegate: the red close button sets the quit flag.
 @interface LeptidDelegate : NSObject <NSWindowDelegate>
 @end
@@ -96,47 +106,10 @@ static InputEvent mouseEvent(InputEvent::Type t, NSEvent* ev, int button) {
 
 - (BOOL)acceptsFirstResponder { return YES; }
 
-- (void)drawRect:(NSRect)dirty {
-    (void)dirty;
-    [[NSGraphicsContext currentContext] setImageInterpolation:NSImageInterpolationNone];
-    if (rep_) {
-        [rep_ drawInRect:self.bounds];
-    } else {
-        [[NSColor colorWithCalibratedRed:0.09 green:0.09 blue:0.11 alpha:1.0] setFill];
-        NSBezierPath* b = [NSBezierPath bezierPathWithRect:self.bounds];
-        [b fill];
-    }
-}
-
+// Defined first so every caller below sees it.
 - (void)pushEvent:(const InputEvent&)e {
     if (pending_) pending_->push_back(e);
 }
-
-- (void)mouseMoved:(NSEvent*)ev     { [self pushEvent:mouseEvent(InputEvent::Type::MouseMove, ev, 0)]; }
-- (void)mouseDragged:(NSEvent*)ev   { [self pushEvent:mouseEvent(InputEvent::Type::MouseMove, ev, 0)]; }
-- (void)rightMouseDragged:(NSEvent*)ev { [self pushEvent:mouseEvent(InputEvent::Type::MouseMove, ev, 0)]; }
-- (void)otherMouseDragged:(NSEvent*)ev { [self pushEvent:mouseEvent(InputEvent::Type::MouseMove, ev, 0)]; }
-
-- (void)mouseDown:(NSEvent*)ev        { [self pushEvent:mouseEvent(InputEvent::Type::MouseDown, ev, 1)]; }
-- (void)rightMouseDown:(NSEvent*)ev   { [self pushEvent:mouseEvent(InputEvent::Type::MouseDown, ev, 3)]; }
-- (void)otherMouseDown:(NSEvent*)ev   { [self pushEvent:mouseEvent(InputEvent::Type::MouseDown, ev, 2)]; }
-- (void)mouseUp:(NSEvent*)ev          { [self pushEvent:mouseEvent(InputEvent::Type::MouseUp, ev, 1)]; }
-- (void)rightMouseUp:(NSEvent*)ev     { [self pushEvent:mouseEvent(InputEvent::Type::MouseUp, ev, 3)]; }
-- (void)otherMouseUp:(NSEvent*)ev     { [self pushEvent:mouseEvent(InputEvent::Type::MouseUp, ev, 2)]; }
-
-- (void)scrollWheel:(NSEvent*)ev {
-    InputEvent e;
-    e.type = InputEvent::Type::Wheel;
-    NSPoint p = ev.locationInWindow;
-    NSRect bounds = ev.window.contentView.bounds;
-    e.x = (float)p.x;
-    e.y = (float)(bounds.size.height - p.y);
-    e.wheelDelta = ev.deltaY > 0 ? 1 : (ev.deltaY < 0 ? -1 : 0);
-    [self pushEvent:e];
-}
-
-- (void)keyDown:(NSEvent*)ev  { [self keyEvent:ev down:YES]; }
-- (void)keyUp:(NSEvent*)ev    { [self keyEvent:ev down:NO]; }
 
 - (void)keyEvent:(NSEvent*)ev down:(BOOL)down {
     Key k = mapKeyCode(ev.keyCode);
@@ -164,6 +137,9 @@ static InputEvent mouseEvent(InputEvent::Type t, NSEvent* ev, int button) {
     }
 }
 
+- (void)keyDown:(NSEvent*)ev  { [self keyEvent:ev down:YES]; }
+- (void)keyUp:(NSEvent*)ev    { [self keyEvent:ev down:NO]; }
+
 // Modifier transitions -> explicit Ctrl/Shift KeyDown/KeyUp, matching the
 // X11 backend's behaviour so keyboard shortcuts behave identically.
 - (void)flagsChanged:(NSEvent*)ev {
@@ -186,7 +162,46 @@ static InputEvent mouseEvent(InputEvent::Type t, NSEvent* ev, int button) {
     }
 }
 
+- (void)mouseMoved:(NSEvent*)ev        { [self pushEvent:mouseEvent(InputEvent::Type::MouseMove, ev, 0)]; }
+- (void)mouseDragged:(NSEvent*)ev      { [self pushEvent:mouseEvent(InputEvent::Type::MouseMove, ev, 0)]; }
+- (void)rightMouseDragged:(NSEvent*)ev { [self pushEvent:mouseEvent(InputEvent::Type::MouseMove, ev, 0)]; }
+- (void)otherMouseDragged:(NSEvent*)ev { [self pushEvent:mouseEvent(InputEvent::Type::MouseMove, ev, 0)]; }
+
+- (void)mouseDown:(NSEvent*)ev        { [self pushEvent:mouseEvent(InputEvent::Type::MouseDown, ev, 1)]; }
+- (void)rightMouseDown:(NSEvent*)ev   { [self pushEvent:mouseEvent(InputEvent::Type::MouseDown, ev, 3)]; }
+- (void)otherMouseDown:(NSEvent*)ev   { [self pushEvent:mouseEvent(InputEvent::Type::MouseDown, ev, 2)]; }
+- (void)mouseUp:(NSEvent*)ev          { [self pushEvent:mouseEvent(InputEvent::Type::MouseUp, ev, 1)]; }
+- (void)rightMouseUp:(NSEvent*)ev     { [self pushEvent:mouseEvent(InputEvent::Type::MouseUp, ev, 3)]; }
+- (void)otherMouseUp:(NSEvent*)ev     { [self pushEvent:mouseEvent(InputEvent::Type::MouseUp, ev, 2)]; }
+
+- (void)scrollWheel:(NSEvent*)ev {
+    InputEvent e;
+    e.type = InputEvent::Type::Wheel;
+    NSPoint p = ev.locationInWindow;
+    NSRect bounds = ev.window.contentView.bounds;
+    e.x = (float)p.x;
+    e.y = (float)(bounds.size.height - p.y);
+    e.wheelDelta = ev.deltaY > 0 ? 1 : (ev.deltaY < 0 ? -1 : 0);
+    [self pushEvent:e];
+}
+
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    [[NSGraphicsContext currentContext] setImageInterpolation:NSImageInterpolationNone];
+    if (rep_) {
+        [rep_ drawInRect:self.bounds];
+    } else {
+        [[NSColor colorWithCalibratedRed:0.09 green:0.09 blue:0.11 alpha:1.0] setFill];
+        NSBezierPath* b = [NSBezierPath bezierPathWithRect:self.bounds];
+        [b fill];
+    }
+}
+
 @end
+
+// --- C++ window class ----------------------------------------------------------
+
+namespace leptid {
 
 class MacWindow : public PlatformWindow {
 public:
@@ -235,7 +250,6 @@ public:
     ~MacWindow() override {
         if (window_) {
             [window_ setDelegate:nil];
-            // ARC manages the ObjC objects; closing the window is polite.
             [window_ performClose:nil];
         }
     }
@@ -296,8 +310,6 @@ private:
     bool ok_ = false;
     std::chrono::steady_clock::time_point start_;
 };
-
-} // namespace
 
 std::unique_ptr<PlatformWindow> PlatformWindow::create(int w, int h, const char* title) {
     auto win = std::make_unique<MacWindow>(w, h, title);

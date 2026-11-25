@@ -8,25 +8,25 @@
 // embedded brush tip assets (generated into bin/assets.cpp by the build)
 namespace leptid_embed {
 extern const unsigned char tip_pencil_png[];
-extern const unsigned tip_pencil_png_len;
+extern unsigned int tip_pencil_png_len;
 extern const unsigned char tip_ink_png[];
-extern const unsigned tip_ink_png_len;
+extern unsigned int tip_ink_png_len;
 extern const unsigned char tip_marker_png[];
-extern const unsigned tip_marker_png_len;
+extern unsigned int tip_marker_png_len;
 extern const unsigned char tip_airbrush_png[];
-extern const unsigned tip_airbrush_png_len;
+extern unsigned int tip_airbrush_png_len;
 extern const unsigned char tip_chalk_png[];
-extern const unsigned tip_chalk_png_len;
+extern unsigned int tip_chalk_png_len;
 extern const unsigned char tip_spray_png[];
-extern const unsigned tip_spray_png_len;
+extern unsigned int tip_spray_png_len;
 extern const unsigned char tip_soft_round_png[];
-extern const unsigned tip_soft_round_png_len;
+extern unsigned int tip_soft_round_png_len;
 extern const unsigned char tip_hard_round_png[];
-extern const unsigned tip_hard_round_png_len;
+extern unsigned int tip_hard_round_png_len;
 extern const unsigned char tip_eraser_hard_png[];
-extern const unsigned tip_eraser_hard_png_len;
+extern unsigned int tip_eraser_hard_png_len;
 extern const unsigned char tip_eraser_soft_png[];
-extern const unsigned tip_eraser_soft_png_len;
+extern unsigned int tip_eraser_soft_png_len;
 }
 
 namespace leptid {
