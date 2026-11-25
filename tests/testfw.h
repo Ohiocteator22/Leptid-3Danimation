@@ -2,9 +2,27 @@
 #pragma once
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <string>
 
 namespace testfw {
 extern int gPassed, gFailed;
+
+// Scratch file path that works on every CI platform. A hardcoded "/tmp/..."
+// breaks on Windows, where fopen("/tmp/x") resolves to "<drive>:\tmp\x" and
+// that directory does not exist (saves fail, loads "cannot open"). %TEMP% is
+// always writable on Windows runners; /tmp is standard on Linux/macOS.
+inline std::string tmpFile(const char* name) {
+#ifdef _WIN32
+    const char* t = std::getenv("TEMP");
+    if (!t || !*t) t = std::getenv("TMP");
+    std::string dir = (t && *t) ? t : ".";
+    if (dir.back() != '/' && dir.back() != '\\') dir += '\\';
+    return dir + name;
+#else
+    return std::string("/tmp/") + name;
+#endif
+}
 }
 
 #define CHECK(cond) do { \

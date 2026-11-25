@@ -118,20 +118,27 @@ void testLcharRoundtrip() {
     p3.setDelta(armLo, degToRad(-40));
     c.track.setKey(24, p3);
 
-    CHECK(saveLchar("/tmp/leptid_test.Lchar", c, &err));
+    std::string lcharPath = tmpFile("leptid_test.Lchar");
+    CHECK(saveLchar(lcharPath, c, &err));
     Character loaded;
-    CHECK(loadLchar("/tmp/leptid_test.Lchar", loaded, &err));
+    CHECK(loadLchar(lcharPath, loaded, &err));
     if (!err.empty()) fprintf(stderr, "load error: %s\n", err.c_str());
     CHECK(loaded.parts.size() == c.parts.size());
     CHECK(loaded.skeleton.bones.size() == c.skeleton.bones.size());
-    for (size_t i = 0; i < c.parts.size(); ++i) {
-        CHECK(loaded.parts[i].sprite.px == c.parts[i].sprite.px); // lossless
-        CHECK(loaded.parts[i].name == c.parts[i].name);
+    // guard: when the load fails 'loaded' is empty — indexing it would segfault
+    // (Release STL has no bounds checks) and mask the real failures below
+    if (loaded.parts.size() == c.parts.size()) {
+        for (size_t i = 0; i < c.parts.size(); ++i) {
+            CHECK(loaded.parts[i].sprite.px == c.parts[i].sprite.px); // lossless
+            CHECK(loaded.parts[i].name == c.parts[i].name);
+        }
     }
     CHECK(loaded.track.keyCount() == 3);
     // tween through the animation works after load
-    Pose mid = loaded.track.sample(6);
-    CHECK(mid.delta(armUp) > 0.01f && mid.delta(armUp) < degToRad(60));
+    if (loaded.track.keyCount() > 0) {
+        Pose mid = loaded.track.sample(6);
+        CHECK(mid.delta(armUp) > 0.01f && mid.delta(armUp) < degToRad(60));
+    }
 }
 
 void testLepRoundtrip() {
@@ -173,7 +180,7 @@ void testLepRoundtrip() {
     // character: import the .Lchar from the previous test
     Character c;
     std::string err;
-    CHECK(loadLchar("/tmp/leptid_test.Lchar", c, &err));
+    CHECK(loadLchar(tmpFile("leptid_test.Lchar"), c, &err));
     std::string cid = p->addCharacter(std::make_shared<Character>(c));
     auto cl = std::make_shared<CharacterLayer>();
     cl->id = Project::newLayerId();
@@ -183,9 +190,9 @@ void testLepRoundtrip() {
     cl->scale = 0.9f;
     p->layers.push_back(cl);
 
-    CHECK(saveLep("/tmp/leptid_test.lep", *p, &err));
+    CHECK(saveLep(tmpFile("leptid_test.lep"), *p, &err));
     Project back;
-    CHECK(loadLep("/tmp/leptid_test.lep", back, &err));
+    CHECK(loadLep(tmpFile("leptid_test.lep"), back, &err));
     if (!err.empty()) fprintf(stderr, "lep error: %s\n", err.c_str());
     CHECK(back.name == "Roundtrip Test");
     CHECK(back.fps == 30 && back.frameCount == 20);
@@ -199,8 +206,11 @@ void testLepRoundtrip() {
     // character sprites survived (self-contained)
     Character* c2 = back.findCharacter(back.layers[3]->id.empty() ? cid : ((CharacterLayer*)back.layers[3].get())->characterId);
     CHECK(c2 != nullptr);
-    CHECK(c2->parts.size() == 10);
-    CHECK(c2->parts[0].sprite.px == c.parts[0].sprite.px);
+    // guard: never index a null/empty result — a failed load must FAIL, not crash
+    if (c2 && c2->parts.size() == c.parts.size()) {
+        CHECK(c2->parts.size() == 10);
+        CHECK(c2->parts[0].sprite.px == c.parts[0].sprite.px);
+    }
     // group nesting survived
     CHECK(back.layers[1]->type == LayerType::Group);
     GroupLayer* g2 = (GroupLayer*)back.layers[1].get();
@@ -264,7 +274,7 @@ void testCompositor() {
     // character layer through the compositor (the DA/OOA interop path)
     Character c2;
     std::string err;
-    CHECK(loadLchar("/tmp/leptid_test.Lchar", c2, &err));
+    CHECK(loadLchar(tmpFile("leptid_test.Lchar"), c2, &err));
     std::string cid = p->addCharacter(std::make_shared<Character>(c2));
     auto cl = std::make_shared<CharacterLayer>();
     cl->id = Project::newLayerId();
@@ -475,7 +485,7 @@ void testLepCameraTrackRoundtrip() {
     p.playMode = PlayMode::PingPong;
     p.playStart = 2;
     p.playEnd = 40;
-    std::string path = "/tmp/leptid_camtest.lep";
+    std::string path = tmpFile("leptid_camtest.lep");
     std::string err;
     CHECK(saveLep(path, p, &err));
     Project q;
