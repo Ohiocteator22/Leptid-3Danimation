@@ -141,24 +141,82 @@ static void testZipRoundtrip() {
     CHECK(!zr.read("missing.json", out));
 }
 
-static void testZipInterop() {
-    // 1) Read a real python-zipfile-produced deflate zip with our reader.
-    FILE* p = popen("python3 -c \"\n"
-                    "import zipfile,io,sys\n"
-                    "b=io.BytesIO()\n"
-                    "z=zipfile.ZipFile(b,'w',zipfile.ZIP_DEFLATED)\n"
-                    "data=('abcdefgh'*2000).encode()\n"
-                    "z.writestr('a.txt',data)\n"
-                    "z.writestr('dir/b.bin',bytes(range(256))*40)\n"
-                    "z.close()\n"
-                    "sys.stdout.buffer.write(b.getvalue())\n\"", "r");
-    std::vector<uint8_t> pyZip;
-    if (p) {
-        char buf[4096];
-        size_t n;
-        while ((n = fread(buf, 1, sizeof buf, p)) > 0) pyZip.insert(pyZip.end(), buf, buf + n);
+// Python is invoked through a script FILE, never through a multi-line
+// `python3 -c "..."` string: popen on Windows hands the command to cmd.exe,
+// which cannot carry a multi-line quoted program (the interop test silently
+// produced empty output there). Interpreter discovery probes `python3` then
+// `python`; the output sniff also rejects the Microsoft Store python3 stub.
+static bool writeFileBytes(const std::string& path, const void* data, size_t len) {
+    FILE* f = fopen(path.c_str(), "wb");
+    if (!f) return false;
+    size_t n = fwrite(data, 1, len, f);
+    fclose(f);
+    return n == len;
+}
+
+static std::vector<uint8_t> readFileBytes(const std::string& path) {
+    std::vector<uint8_t> out;
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return out;
+    uint8_t buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) out.insert(out.end(), buf, buf + n);
+    fclose(f);
+    return out;
+}
+
+static std::string probePython() {
+    const char* candidates[] = {"python3", "python"};
+    for (const char* c : candidates) {
+        std::string cmd = std::string(c) + " -c \"print(4242)\"";
+        FILE* p = popen(cmd.c_str(), "r");
+        if (!p) continue;
+        char buf[128] = {0};
+        fread(buf, 1, sizeof buf - 1, p);
         pclose(p);
+        if (strstr(buf, "4242")) return c;
     }
+    return {};
+}
+
+// Runs `python script arg`, collecting stdout and the exit code.
+static void runPythonScript(const std::string& py, const std::string& script,
+                            const std::string& arg, std::string* outText, int* rc) {
+    *rc = -1;
+    std::string cmd = py + " \"" + script + "\" \"" + arg + "\"";
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return;
+    char buf[256];
+    size_t n;
+    if (outText) {
+        while ((n = fread(buf, 1, sizeof buf, p)) > 0) outText->append(buf, n);
+    }
+    *rc = pclose(p);
+}
+
+static void testZipInterop() {
+    std::string py = probePython();
+    if (py.empty()) {
+        fprintf(stderr, "SKIP: no python interpreter found, zip interop unchecked\n");
+        return;
+    }
+    std::string genScript = testfw::tmpFile("leptid_zipgen.py");
+    std::string pyZipPath = testfw::tmpFile("leptid_pygen.zip");
+    std::string chkScript = testfw::tmpFile("leptid_zipchk.py");
+    std::string oursPath  = testfw::tmpFile("leptid_ours.zip");
+
+    // 1) Read a real python-zipfile-produced deflate zip with our reader.
+    const char* genSrc =
+        "import zipfile, sys\n"
+        "z = zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED)\n"
+        "z.writestr('a.txt', ('abcdefgh' * 2000).encode())\n"
+        "z.writestr('dir/b.bin', bytes(range(256)) * 40)\n"
+        "z.close()\n";
+    writeFileBytes(genScript, genSrc, strlen(genSrc));
+    std::string genOut;
+    int genRc = -1;
+    runPythonScript(py, genScript, pyZipPath, &genOut, &genRc);
+    std::vector<uint8_t> pyZip = readFileBytes(pyZipPath);
     CHECK(!pyZip.empty());
     ZipReader zr;
     CHECK(zr.open(pyZip));
@@ -181,25 +239,21 @@ static void testZipInterop() {
     std::vector<uint8_t> payload(5000, 42);
     zw.add("d/payload", payload);
     auto ours = zw.build();
-    FILE* pf = fopen("/tmp/leptid_ours.zip", "wb");
-    fwrite(ours.data(), 1, ours.size(), pf);
-    fclose(pf);
-    FILE* pr = popen("python3 -c \"\n"
-                     "import zipfile\n"
-                     "z=zipfile.ZipFile('/tmp/leptid_ours.zip')\n"
-                     "assert z.testzip() is None, 'crc fail'\n"
-                     "assert z.read('x.json').decode()=='{\\\"ok\\\":true,\\\"n\\\":3}'\n"
-                     "assert z.read('d/payload')==b'\\x2a'*5000\n"
-                     "assert z.getinfo('d/payload').compress_type==8\n"
-                     "print('PY_OK')\"", "r");
-    CHECK(pr != nullptr);
-    if (pr) {
-        char buf[64] = {0};
-        fread(buf, 1, 31, pr);
-        CHECK(strstr(buf, "PY_OK") != nullptr);
-        int rc = pclose(pr);
-        CHECK(rc == 0);
-    }
+    CHECK(writeFileBytes(oursPath, ours.data(), ours.size()));
+    const char* chkSrc =
+        "import zipfile, sys\n"
+        "z = zipfile.ZipFile(sys.argv[1])\n"
+        "assert z.testzip() is None, 'crc fail'\n"
+        "assert z.read('x.json').decode() == '{\\\"ok\\\":true,\\\"n\\\":3}'\n"
+        "assert z.read('d/payload') == b'\\x2a' * 5000\n"
+        "assert z.getinfo('d/payload').compress_type == 8\n"
+        "print('PY_OK')\n";
+    writeFileBytes(chkScript, chkSrc, strlen(chkSrc));
+    std::string out2;
+    int rc2 = -1;
+    runPythonScript(py, chkScript, oursPath, &out2, &rc2);
+    CHECK(out2.find("PY_OK") != std::string::npos);
+    CHECK(rc2 == 0);
 }
 
 static void testPngRoundtrip() {
@@ -213,10 +267,11 @@ static void testPngRoundtrip() {
     // soft-edge disc alpha changes pixels, so compare loosely: center must match
     CHECK(back.at(25, 20) == img.at(25, 20));
     CHECK(back.px == img.px); // PNG is lossless
-    // file path roundtrip
-    CHECK(savePng("/tmp/leptid_test.png", img));
+    // file path roundtrip (portable scratch dir: %TEMP% on Windows, /tmp elsewhere)
+    std::string pngPath = testfw::tmpFile("leptid_test.png");
+    CHECK(savePng(pngPath, img));
     Image fileImg;
-    CHECK(loadPng("/tmp/leptid_test.png", fileImg));
+    CHECK(loadPng(pngPath, fileImg));
     CHECK(fileImg.px == img.px);
 }
 

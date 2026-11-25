@@ -29,21 +29,32 @@ void runAudioTests() {
             float v = std::sin((float)i * 0.05f);
             put16((uint16_t)(int16_t)(v * 20000));
         }
-    FILE* f = fopen("/tmp/leptid_test.wav", "wb");
-    fwrite(wav.data(), 1, wav.size(), f);
-    fclose(f);
+    std::string wavPath = tmpFile("leptid_test.wav");
+    FILE* f = fopen(wavPath.c_str(), "wb");
+    if (f) {
+        fwrite(wav.data(), 1, wav.size(), f);
+        fclose(f);
+    } else {
+        fprintf(stderr, "SKIP: cannot write scratch wav %s\n", wavPath.c_str());
+    }
     std::shared_ptr<AudioClip> clip;
     std::string err;
-    CHECK(loadWavFile("/tmp/leptid_test.wav", clip, &err));
-    CHECK(clip->sampleRate == rate && clip->channels == ch);
-    CHECK(clip->samples.size() == (size_t)frames * ch);
-    CHECK_NEAR(clip->durationSec(), 0.5, 0.01);
-    CHECK(clip->durationFrames(24) == 12);
+    CHECK(loadWavFile(wavPath, clip, &err));
+    // guard: a failed load leaves clip null — dereferencing it segfaults
+    if (clip) {
+        CHECK(clip->sampleRate == rate && clip->channels == ch);
+        CHECK(clip->samples.size() == (size_t)frames * ch);
+        CHECK_NEAR(clip->durationSec(), 0.5, 0.01);
+        CHECK(clip->durationFrames(24) == 12);
+    }
     // dispatcher on extension
-    CHECK(importAudio("/tmp/leptid_test.wav", clip, &err));
-    // ffmpeg transcode path (mp3 from our own sine wav)
-    if (system("ffmpeg -y -loglevel error -i /tmp/leptid_test.wav /tmp/leptid_test.mp3") == 0) {
-        CHECK(importAudio("/tmp/leptid_test.mp3", clip, &err));
-        CHECK_NEAR(clip->durationSec(), 0.5, 0.05);
+    CHECK(importAudio(wavPath, clip, &err));
+    // ffmpeg transcode path (mp3 from our own sine wav); optional — runners may
+    // not ship ffmpeg. Paths are quoted so %TEMP% spaces never break the shell.
+    std::string mp3Path = tmpFile("leptid_test.mp3");
+    std::string ffCmd = "ffmpeg -y -loglevel error -i \"" + wavPath + "\" \"" + mp3Path + "\"";
+    if (system(ffCmd.c_str()) == 0) {
+        CHECK(importAudio(mp3Path, clip, &err));
+        if (clip) CHECK_NEAR(clip->durationSec(), 0.5, 0.05);
     }
 }
