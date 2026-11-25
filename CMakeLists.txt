@@ -44,6 +44,26 @@ add_custom_command(
 file(GLOB_RECURSE APP_SRCS CONFIGURE_DEPENDS src/*.cpp)
 list(REMOVE_ITEM APP_SRCS ${CMAKE_SOURCE_DIR}/src/app/main.cpp)
 
+# --- interactive platform backend: exactly ONE per OS ------------------------
+# macOS must never touch X11: Homebrew's libX11 is arm64-only while the
+# release is a universal (arm64 + x86_64) build, so the x86_64 slice failed
+# with "Undefined symbols: _XOpenDisplay ..." (the macOS CI error). Cocoa is
+# a system framework, so a native backend keeps the zero-dependency promise.
+if(WIN32)
+    set(LEPTID_PLATFORM win32)
+elseif(APPLE)
+    enable_language(OBJCXX)
+    list(APPEND APP_SRCS src/platform/platform_mac.mm) # the *.cpp glob misses .mm
+    set(LEPTID_PLATFORM cocoa)
+else()
+    find_package(X11 QUIET)
+    if(X11_FOUND)
+        set(LEPTID_PLATFORM x11)
+    else()
+        set(LEPTID_PLATFORM none)   # headless: --demo / --headless / --ui-shot still work
+    endif()
+endif()
+
 # Build-once guarantee: a custom target builds the generated sources exactly
 # once; both executables list them as sources (to compile/link) AND depend on
 # the custom target (to order the build). Without the custom target a parallel
@@ -63,26 +83,29 @@ if (WIN32)
 endif()
 target_include_directories(leptid PRIVATE src third_party/stb)
 
-if (WIN32)
+if (LEPTID_PLATFORM STREQUAL "win32")
     # Win32 backend needs gdi32/user32 (linked by default in MSVC; explicit for
     # MinGW) and ws2_32 for the Ollama client's Winsock2 shim
     target_link_libraries(leptid PRIVATE user32 gdi32 ws2_32)
-else()
-    find_package(X11)
-    if (X11_FOUND)
-        target_compile_definitions(leptid PRIVATE LEPTID_HAS_X11)
-        target_include_directories(leptid PRIVATE ${X11_INCLUDE_DIR})
-        target_link_libraries(leptid PRIVATE ${X11_LIBRARIES})
-    endif()
+elseif (LEPTID_PLATFORM STREQUAL "cocoa")
+    target_compile_definitions(leptid PRIVATE LEPTID_HAS_COCOA)
+    target_link_libraries(leptid PRIVATE "-framework Cocoa")
+elseif (LEPTID_PLATFORM STREQUAL "x11")
+    target_compile_definitions(leptid PRIVATE LEPTID_HAS_X11)
+    target_include_directories(leptid PRIVATE ${X11_INCLUDE_DIR})
+    target_link_libraries(leptid PRIVATE ${X11_LIBRARIES})
 endif()
 
 file(GLOB_RECURSE TEST_SRCS CONFIGURE_DEPENDS tests/*.cpp)
 add_executable(leptid_tests ${APP_SRCS} ${TEST_SRCS} ${FONTCPP} ${ASSETCPP})
 add_dependencies(leptid_tests generated_sources)
 target_include_directories(leptid_tests PRIVATE src third_party/stb)
-if (WIN32)
+if (LEPTID_PLATFORM STREQUAL "win32")
     target_link_libraries(leptid_tests PRIVATE user32 gdi32 ws2_32)
-elseif (X11_FOUND)
+elseif (LEPTID_PLATFORM STREQUAL "cocoa")
+    target_compile_definitions(leptid_tests PRIVATE LEPTID_HAS_COCOA)
+    target_link_libraries(leptid_tests PRIVATE "-framework Cocoa")
+elseif (LEPTID_PLATFORM STREQUAL "x11")
     target_compile_definitions(leptid_tests PRIVATE LEPTID_HAS_X11)
     target_include_directories(leptid_tests PRIVATE ${X11_INCLUDE_DIR})
     target_link_libraries(leptid_tests PRIVATE ${X11_LIBRARIES})

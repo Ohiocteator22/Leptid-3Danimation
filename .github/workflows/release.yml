@@ -101,7 +101,7 @@ jobs:
         shell: bash
         run: |
           cmake --build build-ci --config Release --parallel 1 > diag.log 2>&1 || true
-          grep -E "error|fatal|LNK[0-9]|C[0-9]{4}" diag.log | grep -viE "warning" | head -30 > errs.txt || true
+          grep -E "error|fatal|LNK[0-9]|C[0-9]{4}|Undefined symbols|ld: error|undefined symbol" diag.log | grep -viE "warning" | head -30 > errs.txt || true
           if [ -s errs.txt ]; then
             while IFS= read -r l; do echo "::error title=build error::$l"; done < errs.txt
           else
@@ -122,7 +122,9 @@ jobs:
           else
             EXE="build-ci/leptid"
           fi
-          "$EXE" --demo /tmp/smoke.lep --gif /tmp/smoke.gif
+          # Workspace-relative paths: /tmp does not resolve for a raw Windows
+          # exe (it would map to C:\tmp, which does not exist on the runner).
+          "$EXE" --demo smoke.lep --gif smoke.gif
 
       # ---- Linux: GUI binary + zero-dependency static single-file build ----
       - name: Linux — build static single-file binary
@@ -137,13 +139,27 @@ jobs:
           cp demo/hello_leptid.lep dist/leptid-linux-x64/
           tar -czf leptid-${GITHUB_REF_NAME}-linux-x64.tar.gz -C dist leptid-linux-x64
 
-      # ---- macOS: universal (arm64 + x86_64) headless build ----
+      # ---- macOS: universal (arm64 + x86_64) Cocoa GUI app + CLI binary ----
       - name: macOS — package
         if: runner.os == 'macOS'
         shell: bash
         run: |
           mkdir -p dist/leptid-macos-universal
-          cp build-ci/leptid dist/leptid-macos-universal/leptid
+          APP="dist/leptid-macos-universal/Leptid.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp build-ci/leptid "$APP/Contents/MacOS/leptid"
+          cp assets/icons/leptid.icns "$APP/Contents/Resources/leptid.icns"
+          sed -e "s/@VERSION@/${GITHUB_REF_NAME#v}/" packaging/Info.plist > "$APP/Contents/Info.plist"
+          cp build-ci/leptid dist/leptid-macos-universal/leptid-cli
+          cat > dist/leptid-macos-universal/MACOS-README.txt <<'EOF'
+          Leptid (macOS, universal: Apple Silicon + Intel)
+          - Leptid.app — double-click to run. The build is unsigned, so macOS
+            Gatekeeper may warn on first launch: right-click > Open once, or
+            clear the quarantine flag with:  xattr -cr Leptid.app
+          - leptid-cli — the same app as a command-line binary; --demo,
+            --headless and --ui-shot work without a window, plain `./leptid-cli`
+            opens a native Cocoa window.
+          EOF
           cp README.md MANUAL.md LICENSE dist/leptid-macos-universal/
           cp demo/hello_leptid.lep dist/leptid-macos-universal/
           tar -czf leptid-${GITHUB_REF_NAME}-macos-universal.tar.gz -C dist leptid-macos-universal

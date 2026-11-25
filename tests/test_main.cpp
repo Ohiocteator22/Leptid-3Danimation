@@ -9,6 +9,11 @@
 #include "formats/json.h"
 #include "formats/zipcodec.h"
 #include "formats/pngio.h"
+#include <filesystem>
+#if defined(_MSC_VER) // MSVC names the pipe-to-process functions _popen/_pclose
+#define popen _popen
+#define pclose _pclose
+#endif
 
 using namespace leptid;
 
@@ -142,8 +147,18 @@ static void testZipRoundtrip() {
 }
 
 static void testZipInterop() {
+    // Windows runners ship `python`, not `python3`; the temp zip must live in
+    // the real temp directory, not /tmp (which does not exist on Windows).
+#ifdef _WIN32
+    const char* py = "python";
+#else
+    const char* py = "python3";
+#endif
+    std::string tmpZip =
+        (std::filesystem::temp_directory_path() / "leptid_ours.zip").generic_string();
+
     // 1) Read a real python-zipfile-produced deflate zip with our reader.
-    FILE* p = popen("python3 -c \"\n"
+    std::string cmd = std::string(py) + " -c \"\n"
                     "import zipfile,io,sys\n"
                     "b=io.BytesIO()\n"
                     "z=zipfile.ZipFile(b,'w',zipfile.ZIP_DEFLATED)\n"
@@ -151,7 +166,8 @@ static void testZipInterop() {
                     "z.writestr('a.txt',data)\n"
                     "z.writestr('dir/b.bin',bytes(range(256))*40)\n"
                     "z.close()\n"
-                    "sys.stdout.buffer.write(b.getvalue())\n\"", "r");
+                    "sys.stdout.buffer.write(b.getvalue())\n\"";
+    FILE* p = popen(cmd.c_str(), "r");
     std::vector<uint8_t> pyZip;
     if (p) {
         char buf[4096];
@@ -181,17 +197,21 @@ static void testZipInterop() {
     std::vector<uint8_t> payload(5000, 42);
     zw.add("d/payload", payload);
     auto ours = zw.build();
-    FILE* pf = fopen("/tmp/leptid_ours.zip", "wb");
-    fwrite(ours.data(), 1, ours.size(), pf);
-    fclose(pf);
-    FILE* pr = popen("python3 -c \"\n"
+    FILE* pf = fopen(tmpZip.c_str(), "wb");
+    CHECK(pf != nullptr);
+    if (pf) {
+        fwrite(ours.data(), 1, ours.size(), pf);
+        fclose(pf);
+    }
+    std::string cmd2 = std::string(py) + " -c \"\n"
                      "import zipfile\n"
-                     "z=zipfile.ZipFile('/tmp/leptid_ours.zip')\n"
+                     "z=zipfile.ZipFile('" + tmpZip + "')\n"
                      "assert z.testzip() is None, 'crc fail'\n"
                      "assert z.read('x.json').decode()=='{\\\"ok\\\":true,\\\"n\\\":3}'\n"
                      "assert z.read('d/payload')==b'\\x2a'*5000\n"
                      "assert z.getinfo('d/payload').compress_type==8\n"
-                     "print('PY_OK')\"", "r");
+                     "print('PY_OK')\"";
+    FILE* pr = popen(cmd2.c_str(), "r");
     CHECK(pr != nullptr);
     if (pr) {
         char buf[64] = {0};
