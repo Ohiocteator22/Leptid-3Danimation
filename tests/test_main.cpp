@@ -9,7 +9,15 @@
 #include "formats/json.h"
 #include "formats/zipcodec.h"
 #include "formats/pngio.h"
-
+// MSVC has no POSIX popen/pclose — only the ISO-conformant _popen/_pclose
+// (declared in <stdio.h>); plain `popen` fails with C3861 on Windows.
+// MinGW declares popen natively, so this shim is scoped to _MSC_VER and is
+// a no-op everywhere else. Defined after the includes so any real popen
+// declaration parsed above is untouched.
+#if defined(_MSC_VER)
+#  define popen  _popen
+#  define pclose _pclose
+#endif
 using namespace leptid;
 
 namespace testfw {
