@@ -102,8 +102,7 @@ void Editor::drawLayersPanel(Ui& ui, int x, int y, int w, int h) {
                                 ry + (rowH - 14) / 2, 56, l->opacity, 0, 1);
         if (std::fabs(newOp - l->opacity) > 0.01f) l->opacity = newOp;
         // select row (name area only, so eye/slider keep working)
-        if (inRect(ui.mouse().x, ui.mouse().y, x + kPad + 24, ry, w - 140, rowH) && ui.leftDown() &&
-            ui.pressed(wid() + (unsigned)(i * 10 + 3))) {
+        if (ui.clickHit(wid() + (unsigned)(i * 10 + 3), x + kPad + 24, ry, w - 140, rowH)) {
             project_->activeLayerId = l->id;
         }
     }
@@ -472,8 +471,7 @@ void Editor::drawTimeline(Ui& ui, int x, int y, int w, int h) {
             drawKeyDiamond(k.frame, camY + camH / 2, true,
                            sel ? Color(240, 200, 90, 255) : t.keyframe);
             int dcx = tx + (int)(k.frame * pxPerFrame) + (int)(pxPerFrame * 0.5f);
-            if (inRect(ui.mouse().x, ui.mouse().y, dcx - 5, camY, 10, camH) && ui.leftDown() &&
-                ui.pressed(wid() + 5600 + (unsigned)k.frame)) {
+            if (ui.clickHit(wid() + 5600 + (unsigned)k.frame, dcx - 5, camY, 10, camH)) {
                 selCamKey_ = (selCamKey_ == k.frame) ? -1 : k.frame;
                 frame_ = k.frame;
                 project_->camera = k.cam; // load the key into the editable camera
@@ -509,8 +507,7 @@ void Editor::drawTimeline(Ui& ui, int x, int y, int w, int h) {
                 for (const PoseKey& k : c->track.keys())
                     drawKeyDiamond(k.frame, ry + rowH / 2, true, t.keyframe);
         }
-        if (inRect(ui.mouse().x, ui.mouse().y, tx, ry, tw, rowH) && ui.leftDown() &&
-            ui.pressed(wid() + 5000 + (unsigned)rowIndex)) {
+        if (ui.clickHit(wid() + 5000 + (unsigned)rowIndex, tx, ry, tw, rowH)) {
             project_->activeLayerId = l->id;
         }
         rowIndex++;
@@ -547,7 +544,7 @@ void Editor::drawStatus(Ui& ui, int w, int h) {
     int ry = h - kStatusH;
     ui.panel(0, ry, w, kStatusH, t.panelBg);
     ui.frame(0, ry, w, kStatusH, t.border);
-    int ty = ry + (kStatusH - 9) / 2;
+    int ty = ry + (kStatusH - (int)uiFont().lineHeight()) / 2;
     if (statusFlash_ > 0) {
         statusFlash_--;
         uiFont().draw(fb_, statusText_, kPad, (float)ty, t.ok);

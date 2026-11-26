@@ -45,6 +45,8 @@ bool Font::bake(const unsigned char* ttf, unsigned len, float pixelHeight, Image
     float scale = stbtt_ScaleForPixelHeight(&info, pixelHeight);
     int ascent, descent, lineGap;
     stbtt_GetFontVMetrics(&info, &ascent, &descent, &lineGap);
+    ascent_ = (float)ascent * scale;
+    descent_ = -(float)descent * scale; // stbtt reports descent below baseline as negative
     float aStep = (ascent - descent + lineGap) * scale;
     float yCursor = 2;
     float xCursor = 1;
@@ -94,6 +96,8 @@ float Font::textWidth(const std::string& text) const {
 void Font::drawInternal(Image& fb, const std::string& text, float x, float y, Color c,
                         const Image& atlas, const std::vector<Glyph>& glyphs) const {
     float cx = x;
+    // y is the TOP of the line box: the baseline sits ascent_ below it.
+    float baseline = y + ascent_;
     for (unsigned char ch : text) {
         if (ch == '\n') { continue; }
         if (ch < 32 || ch >= 127) { cx += size_ * 0.3f; continue; }
@@ -101,7 +105,7 @@ void Font::drawInternal(Image& fb, const std::string& text, float x, float y, Co
         if (g.w > 0) {
             // blend glyph alpha onto fb
             int dx = (int)std::lround(cx + g.x0);
-            int dy = (int)std::lround(y + g.y0);
+            int dy = (int)std::lround(baseline + g.y0);
             for (int yy = 0; yy < g.h; ++yy) {
                 int fy = dy + yy;
                 if (fy < 0 || fy >= fb.h) continue;
@@ -159,12 +163,13 @@ void Ui::onEvent(const InputEvent& e) {
         case InputEvent::Type::MouseMove: mx_ = e.x; my_ = e.y; break;
         case InputEvent::Type::MouseDown:
             mx_ = e.x; my_ = e.y;
-            if (e.button == 1) { leftDown_ = true; pressed_ = 0; }
+            if (e.button == 1) { leftDown_ = true; pressed_ = 0; mousePressedEdge_ = true; }
             if (e.button == 3) rightDown_ = true;
             break;
         case InputEvent::Type::MouseUp:
             if (e.button == 1) {
                 leftDown_ = false;
+                mousePressedEdge_ = false;
                 if (active_) released_ = active_; // click completes on the active widget
                 active_ = 0;
             }
@@ -202,9 +207,29 @@ void Ui::begin(Image* fb, float mouseX, float mouseY, bool leftDown, bool rightD
     rightDown_ = rightDown;
     pressed_ = 0;
     released_ = 0;
+    // NOTE: keysPressed_ / chars_ / wheelDelta_ are event-queue state filled by
+    // onEvent() BEFORE begin() in the app loop; they must survive into
+    // update() and are cleared by end() at frame end. Clearing them here is
+    // what used to kill every keyboard shortcut, textbox typing and the
+    // mouse wheel.
+}
+
+void Ui::end() {
+    // Frame-end reset: called by the app loop AFTER update() so exactly one
+    // frame sees each key/char/wheel/press-edge event.
+    hot_ = 0;
     keysPressed_.clear();
     chars_.clear();
     wheelDelta_ = 0;
+    mousePressedEdge_ = false;
+}
+
+bool Ui::clickHit(unsigned id, int x, int y, int w, int h) {
+    if (!inRect(mx_, my_, x, y, w, h)) return false;
+    if (!mousePressedEdge_ || pressed_ != 0) return false;
+    pressed_ = id;
+    active_ = id;
+    return true;
 }
 
 void Ui::clearFrameState() {
@@ -237,12 +262,13 @@ bool Ui::button(unsigned id, const std::string& text, int x, int y, int w, int h
     Color bg = act ? t.accentDim : (hover || highlighted ? t.panelBg2 : t.panelBg);
     fb_->fillRect(x, y, w, h, bg);
     fb_->strokeRect(x, y, w, h, highlighted ? t.accent : t.border, 1);
-    float tw = uiFont().textWidth(text);
-    uiFont().draw(*fb_, text, x + (w - tw) * 0.5f, (float)y + (h - uiFont().height() * 0.72f) * 0.5f,
-                  hover || highlighted ? t.text : t.textDim);
-    if (hover) {
-        if (leftDown_ && pressed_ == 0) { pressed_ = id; active_ = id; }
-    }
+    const Font& f = uiFont();
+    float tw = f.textWidth(text);
+    f.draw(*fb_, text, x + (w - tw) * 0.5f, y + (h - f.lineHeight()) * 0.5f,
+           hover || highlighted ? t.text : t.textDim);
+    // Fire once, on the frame the button went down (press edge), not every
+    // frame while held.
+    if (hover && mousePressedEdge_ && pressed_ == 0) { pressed_ = id; active_ = id; }
     return hover && pressed_ == id && leftDown_;
 }
 
@@ -258,21 +284,29 @@ bool Ui::checkbox(unsigned id, const std::string& text, int x, int y, bool value
             fb_->fillRect(x + 3 + i, y + 12 - i / 2, 2, 2, Color(255, 255, 255, 255));
         }
     }
-    uiFont().draw(*fb_, text, (float)x + 22, (float)y + 2, t.text);
-    if (hover && leftDown_ && pressed_ == 0) { pressed_ = id; }
-    return hover && pressed_ == id && leftDown_;
+    uiFont().draw(*fb_, text, (float)x + 22, (float)y + 1, t.text);
+    if (hover && mousePressedEdge_ && pressed_ == 0) { pressed_ = id; active_ = id; }
+    return pressed_ == id;
 }
 
 float Ui::slider(unsigned id, const std::string& label, int x, int y, int w,
                  float value, float lo, float hi) {
     const Theme& t = Theme::get();
-    int trackY = y + 10;
+    // label on top, track under it — both inside a 24px-tall hit area
+    const Font& f = uiFont();
+    if (!label.empty()) f.draw(*fb_, label, (float)x, (float)y, t.textDim);
+    int trackY = label.empty() ? y + 10 : y + 17;
     fb_->fillRect(x, trackY, w, 4, t.panelBg2);
     float t01 = clampf((value - lo) / (hi - lo + 1e-6f), 0, 1);
     int hx = x + (int)(t01 * (w - 10));
-    bool hover = inRect(mx_, my_, x - 4, y, w + 8, 22);
+    bool hover = inRect(mx_, my_, x - 4, y, w + 8, 24);
     fb_->fillRect(hx, trackY - 4, 10, 12, active_ == id || hover ? t.accent : t.textDim);
-    uiFont().draw(*fb_, label, (float)x, (float)y + 14, t.textDim);
+    char val[24];
+    snprintf(val, sizeof val, "%g", value);
+    if (label.empty()) {
+        // no label room: draw the value under the track when hovered
+        if (hover) f.draw(*fb_, val, (float)x, (float)(trackY + 6), t.textDim);
+    }
     if (hover && leftDown_) active_ = id;
     if (active_ == id && leftDown_) {
         float nv = lo + clampf((mx_ - x) / (float)w, 0, 1) * (hi - lo);
@@ -297,9 +331,12 @@ int Ui::listbox(unsigned id, int x, int y, int w, int h,
         bool rowHover = inRect(mx_, my_, x, ry, w, rowH);
         if (idx == selected) fb_->fillRect(x + 1, ry + 1, w - 2, rowH - 2, t.accentDim);
         else if (rowHover) fb_->fillRect(x + 1, ry + 1, w - 2, rowH - 2, t.panelBg);
-        uiFont().draw(*fb_, items[idx], (float)x + 8, (float)ry + 5, idx == selected ? t.text : t.textDim);
-        if (rowHover && leftDown_ && pressed_ == 0) {
+        const Font& f = uiFont();
+        f.draw(*fb_, items[idx], (float)x + 8, (float)ry + (rowH - f.lineHeight()) * 0.5f,
+               idx == selected ? t.text : t.textDim);
+        if (rowHover && mousePressedEdge_ && pressed_ == 0) {
             pressed_ = id + (unsigned)idx;
+            active_ = id;
             clicked = idx;
         }
     }
@@ -312,13 +349,14 @@ bool Ui::textbox(unsigned id, std::string& value, int x, int y, int w) {
     bool focus = captured_ == id;
     fb_->fillRect(x, y, w, 20, t.panelBg2);
     fb_->strokeRect(x, y, w, 20, focus ? t.accent : (hover ? t.textDim : t.border), 1);
-    uiFont().draw(*fb_, value, (float)x + 5, (float)y + 3, t.text);
+    const Font& f = uiFont();
+    f.draw(*fb_, value, (float)x + 5, (float)y + (20 - f.lineHeight()) * 0.5f, t.text);
     static int caretFrame = 0;
     if (focus && (++caretFrame / 24) % 2 == 0) {
-        float cx = x + 5 + uiFont().textWidth(value);
+        float cx = x + 5 + f.textWidth(value);
         fb_->fillRect((int)cx, y + 3, 1, 14, t.text);
     }
-    if (hover && leftDown_ && pressed_ == 0) { pressed_ = id; captured_ = id; }
+    if (hover && mousePressedEdge_ && pressed_ == 0) { pressed_ = id; captured_ = id; }
     if (focus) {
         for (char c : chars_) {
             if (c == '\b') { if (!value.empty()) value.pop_back(); }

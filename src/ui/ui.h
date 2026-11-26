@@ -55,11 +55,18 @@ struct InputEvent {
     int width = 0, height = 0;   // Resize
 };
 
-// Text rendering (baked glyph atlas via stb_truetype)
+// Text rendering (baked glyph atlas via stb_truetype).
+// Coordinate convention: draw()/drawBold() take (x, y) = TOP-LEFT of the
+// text line box (ascent .. descent), the same convention as every other
+// widget rect in the UI. Callers previously had to guess a baseline offset,
+// which is why text used to sit ~10px too high inside boxes.
 class Font {
 public:
     bool load(const unsigned char* ttf, unsigned len, float pixelHeight);
     float height() const { return size_; }
+    float ascent() const { return ascent_; }    // px above the baseline
+    float descent() const { return descent_; }  // px below the baseline (positive)
+    float lineHeight() const { return ascent_ + descent_; } // full line box
     float textWidth(const std::string& text) const;
     void draw(Image& fb, const std::string& text, float x, float y, Color color) const;
     void drawBold(Image& fb, const std::string& text, float x, float y, Color color) const;
@@ -71,6 +78,7 @@ private:
     void drawInternal(Image& fb, const std::string& text, float x, float y, Color c,
                       const Image& atlas, const std::vector<Glyph>& glyphs) const;
     float size_ = 0;
+    float ascent_ = 0, descent_ = 0; // line metrics from stbtt_GetFontVMetrics
     Image atlas_;
     Image atlasBold_;
     std::vector<Glyph> glyphs_;
@@ -86,7 +94,8 @@ public:
     void begin(Image* fb, float mouseX, float mouseY, bool leftDown, bool rightDown);
     // feed raw events (key/mouse edges); call before begin()
     void onEvent(const InputEvent& e);
-    void end() { hot_ = 0; }
+    // frame-end reset (key/char/wheel/press-edge queues) — call AFTER update()
+    void end();
 
     bool hot(unsigned id) const { return hot_ == id; }
     bool active(unsigned id) const { return active_ == id; }
@@ -106,6 +115,11 @@ public:
     bool keyDown(Key k) const { return keysDown_[(int)k]; }
     std::string charsTyped() const { return chars_; }
     void clearFrameState();
+    // True on the frame the left button went down (edge), anywhere in the window.
+    bool mousePressedEdge() const { return mousePressedEdge_; }
+    // One-shot click test for hand-rolled widgets: hover + press edge + not
+    // already claimed this frame. Claims the press so only one widget fires.
+    bool clickHit(unsigned id, int x, int y, int w, int h);
 
     // ---- widgets (draw + interact; return true on click) ----
     void panel(int x, int y, int w, int h, Color bg);
@@ -127,6 +141,7 @@ private:
     float mx_ = 0, my_ = 0, prevMx_ = 0, prevMy_ = 0;
     bool leftDown_ = false, rightDown_ = false;
     unsigned hot_ = 0, active_ = 0, pressed_ = 0, released_ = 0;
+    bool mousePressedEdge_ = false;
     float wheelDelta_ = 0;
     bool keysDown_[(int)Key::F1 + 1] = {false};
     std::vector<Key> keysPressed_;

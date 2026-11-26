@@ -45,6 +45,12 @@ struct Image {
     // `opacity` multiplies src alpha (0..1).
     void blit(const Image& src, int dx, int dy, float opacity = 1.0f);
 
+    // UNCONDITIONAL pixel copy (no alpha compositing): overwrites dst pixels,
+    // including fully transparent ones. Required for stroke commit/undo — an
+    // erase must be able to write alpha=0 back over painted pixels, which
+    // source-over blit can never do (it skips transparent src pixels).
+    void blitReplace(const Image& src, int dx, int dy);
+
     // Source-over composite with transform (maps src pixel coords -> dst coords),
     // inverse-mapped with bilinear sampling. Used for limb sprites, group transforms, camera rendering.
     void blitTransformed(const Image& src, const Mat3& srcToDst, float opacity = 1.0f);

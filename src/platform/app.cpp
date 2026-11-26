@@ -57,6 +57,7 @@ int runGui(int argc, char** argv, const std::string& project) {
         // one UI frame over the editor framebuffer
         ui.begin(&editor.framebuffer(), mouseX, mouseY, leftDown, rightDown);
         editor.update(ui, W, H, dt);
+        ui.end(); // frame-end reset of key/char/wheel/press-edge queues
         win->present(editor.framebuffer());
         if (editor.wantsQuit()) running = false;
         std::this_thread::sleep_for(std::chrono::milliseconds(12)); // ~80 fps cap
@@ -69,6 +70,7 @@ int runUiShot(const std::string& path, int width, int height, const std::string&
     if (!project.empty()) editor.openProject(project);
     Ui ui;
     editor.renderOnce(ui, width, height);
+    ui.end();
     if (!savePng(path, editor.framebuffer())) {
         fprintf(stderr, "ui-shot: cannot write %s\n", path.c_str());
         return 1;

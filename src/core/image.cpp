@@ -68,6 +68,15 @@ void Image::blit(const Image& src, int dx, int dy, float opacity) {
     }
 }
 
+void Image::blitReplace(const Image& src, int dx, int dy) {
+    if (src.empty() || empty()) return;
+    int x0 = std::max(0, dx), y0 = std::max(0, dy);
+    int x1 = std::min(w, dx + src.w), y1 = std::min(h, dy + src.h);
+    for (int y = y0; y < y1; ++y)
+        for (int x = x0; x < x1; ++x)
+            at(x, y) = src.at(x - dx, y - dy);
+}
+
 void Image::blitTransformed(const Image& src, const Mat3& srcToDst, float opacity) {
     if (src.empty() || empty() || opacity <= 0) return;
     // dst->src mapping for inverse lookup

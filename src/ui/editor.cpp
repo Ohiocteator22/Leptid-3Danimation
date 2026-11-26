@@ -107,8 +107,9 @@ void Editor::update(Ui& ui, int width, int height, double dt) {
 
 // ---------------- shared helpers ----------------
 void Editor::centerLabel(const std::string& text, int x, int y, int w, int h, Color c, bool bold) {
-    float tw = uiFont().textWidth(text);
-    float th = uiFont().height() * 0.72f;
+    const Font& f = bold ? uiFontBig() : uiFont();
+    float tw = f.textWidth(text);
+    float th = f.lineHeight();
     if (bold) uiFontBig().draw(fb_, text, x + (w - tw) * 0.5f, y + (h - th) * 0.5f, c);
     else uiFont().draw(fb_, text, x + (w - tw) * 0.5f, y + (h - th) * 0.5f, c);
 }
@@ -136,7 +137,7 @@ void Editor::drawEye(Ui& ui, int x, int y, bool visible, unsigned id, bool* togg
     if (!visible) {
         fb_.drawLine((float)x + 3, (float)y + s - 4, (float)x + s - 3, (float)y + 3, c, 1.2f);
     }
-    if (hover && ui.leftDown() && ui.pressed(id)) *toggled = true;
+    if (ui.clickHit(id, x, y, s, s)) *toggled = true;
 }
 
 // ---------------- top bar ----------------
@@ -188,12 +189,12 @@ void Editor::brushBar(Ui& ui, int x, int y, int w) {
     const Theme& t = Theme::get();
     const auto& presets = BrushEngine::presets();
     ui.label("Brushes", x, y, t.text);
-    ui.label("", x, y, t.textDim);
-    int yy = y + 16;
+    int yy = y + 18;
     int cell = (w - kPad * 2 - 6) / 2;
     int i = 0;
     for (const BrushPreset& p : presets) {
-        if (p.eraser) continue; // erasers live under the eraser tool
+        // paint presets and eraser presets are all listed; eraser cells show a
+        // red-tinted sample and switch to the eraser tool when picked
         int cx = x + kPad + (i % 2) * (cell + 6);
         int cy = yy + (i / 2) * (cell + 20);
         bool selected = (tool_ == Tool::Brush && brush_.id == p.id) ||
@@ -202,14 +203,14 @@ void Editor::brushBar(Ui& ui, int x, int y, int w) {
         ui.rect(cx, cy, cell, cell, selected ? t.accentDim : (hover ? t.panelBg2 : t.panelBg));
         ui.frame(cx, cy, cell, cell, selected ? t.accent : t.border);
         // stroke-sample preview (Krita style): shows texture/flow at a glance
-        Image prev = engine_.previewStroke(p.id, cell - 8, cell - 8,
-                                           selected ? Color(235, 238, 245, 255) : Color(185, 190, 200, 255));
+        Color tint = p.eraser ? Color(235, 150, 150, 255)
+                              : (selected ? Color(235, 238, 245, 255) : Color(185, 190, 200, 255));
+        Image prev = engine_.previewStroke(p.id, cell - 8, cell - 8, tint);
         fb_.blit(prev, cx + 4, cy + 4, 1.0f);
         centerLabel(p.name, cx, cy + cell, cell, 16, selected ? t.text : t.textDim);
-        if (hover && ui.leftDown() && ui.pressed(wid() + 7000 + (unsigned)i)) {
-            if (tool_ != Tool::Brush && tool_ != Tool::Eraser) tool_ = Tool::Brush;
+        if (ui.clickHit(wid() + 7000 + (unsigned)i, cx, cy, cell, cell + 16)) {
             if (p.eraser) { eraserId_ = p.id; tool_ = Tool::Eraser; }
-            else brush_.id = p.id;
+            else { brush_.id = p.id; if (tool_ == Tool::Eraser) tool_ = Tool::Brush; }
         }
         i++;
     }
@@ -237,7 +238,7 @@ void Editor::brushBar(Ui& ui, int x, int y, int w) {
         int py = yy + (int)(ci / 2) * 24;
         ui.rect(px, py, cell, 18, palette_[ci]);
         ui.frame(px, py, cell, 18, brush_.color == palette_[ci] ? t.text : t.border);
-        if (inRect(ui.mouse().x, ui.mouse().y, px, py, cell, 18) && ui.leftDown() && ui.pressed(wid() + 8000 + (unsigned)ci))
+        if (ui.clickHit(wid() + 8000 + (unsigned)ci, px, py, cell, 18))
             brush_.color = palette_[ci];
     }
 }
@@ -327,7 +328,7 @@ void Editor::drawCanvas(Ui& ui, int x, int y, int w, int h) {
     if (tool_ == Tool::Eraser) chip += std::string(" · ") + BrushEngine::preset(eraserId_).name;
     ui.label(chip, x + 8, y + h - 20, t.text);
     char pos[64];
-    Vec2 wp = view_.screenToWorldPoint(ui.mouse());
+    Vec2 wp = view_.screenToWorldPoint(Vec2(ui.mouse().x - (float)x, ui.mouse().y - (float)y));
     snprintf(pos, sizeof pos, "world %.0f, %.0f   zoom %.2fx", wp.x, wp.y, view_.scale);
     float pw = uiFont().textWidth(chip);
     ui.label(pos, x + 8 + (int)pw + 16, y + h - 20, t.textDim);
@@ -339,22 +340,29 @@ void Editor::handleCanvasInput(Ui& ui, int x, int y, int w, int h) {
     if (!overCanvas) {
         rawStroke_.clear();
         stroking_ = false;
+        liveValid_ = false;
         boneDragging_ = false;
         ikDragging_ = false;
         panning_ = false;
         return;
     }
-    Vec2 world = view_.screenToWorldPoint(m);
+    // Mouse events arrive in WINDOW coordinates; every view transform below
+    // works in CANVAS-VIEWPORT coordinates (0..w, 0..h relative to the canvas
+    // rect). Skipping this subtraction made strokes land at
+    // cursor + canvasOrigin — the reported "drawing appears offset from the
+    // cursor" bug.
+    Vec2 mLocal(m.x - (float)x, m.y - (float)y);
+    Vec2 world = view_.screenToWorldPoint(mLocal);
 
     // zoom (wheel): editor zoom around cursor
     if (ui.wheel()) {
         float factor = std::pow(1.15f, ui.wheelDelta());
-        Vec2 anchor = view_.screenToWorldPoint(m);
+        Vec2 anchor = view_.screenToWorldPoint(mLocal);
         view_.scale = clampf(view_.scale * factor, 0.05f, 8.0f);
         // keep the world point under the cursor fixed
         Vec2 after = view_.worldToScreenPoint(anchor);
-        view_.cx -= (after.x - m.x) / view_.scale;
-        view_.cy -= (after.y - m.y) / view_.scale;
+        view_.cx -= (after.x - mLocal.x) / view_.scale;
+        view_.cy -= (after.y - mLocal.y) / view_.scale;
     }
 
     // middle-drag or camera tool: pan (camera tool moves the PROJECT camera, not the view)
@@ -382,14 +390,42 @@ void Editor::handleCanvasInput(Ui& ui, int x, int y, int w, int h) {
                     rawStroke_.push_back(world);
                     stroking_ = true;
                     strokeSnapshot_ = img;
+                    liveValid_ = false;
                     ui.setActive(wid()); // capture drag
                 }
             } else if (stroking_ && ui.active() != 0 && ui.leftDown()) {
                 rawStroke_.push_back(world);
             }
+            // LIVE PREVIEW: while dragging, restore the region painted by the
+            // previous frame's preview from the stroke snapshot and repaint the
+            // full stabilized path over that clean base. The stroke is visible
+            // the instant it is drawn (no more "appears only on release"),
+            // repeated frames cannot build up flow, and the committed result
+            // is pixel-identical to the preview. This also makes the eraser
+            // erase live.
+            if (stroking_ && ui.leftDown()) {
+                Image& img = rl->ensureFrame(frame_);
+                if (liveValid_ && liveBounds_.x1 >= liveBounds_.x0) {
+                    img.blitReplace(strokeSnapshot_.crop(liveBounds_.x0, liveBounds_.y0,
+                                                         liveBounds_.x1 - liveBounds_.x0 + 1,
+                                                         liveBounds_.y1 - liveBounds_.y0 + 1),
+                                    liveBounds_.x0, liveBounds_.y0);
+                }
+                BrushSettings b = brush_;
+                b.eraser = tool_ == Tool::Eraser;
+                if (b.eraser) b.id = eraserId_;
+                auto smoothed = smoothStroke(rawStroke_, stabilizer_);
+                engine_.paintStroke(img, smoothed, b);
+                IRect r1 = strokeBounds(rawStroke_, b, img.w, img.h);
+                IRect r2 = strokeBounds(smoothed, b, img.w, img.h);
+                liveBounds_ = IRect{std::min(r1.x0, r2.x0), std::min(r1.y0, r2.y0),
+                                    std::max(r1.x1, r2.x1), std::max(r1.y1, r2.y1)};
+                liveValid_ = true;
+            }
             if (stroking_ && !ui.leftDown()) {
                 commitStroke();
                 stroking_ = false;
+                liveValid_ = false;
             }
             break;
         }
@@ -414,10 +450,10 @@ void Editor::handleCanvasInput(Ui& ui, int x, int y, int w, int h) {
                     float bestD = 12;
                     for (const BoneWorld& b : bw) {
                         Vec2 a = place.apply(b.start), bb = place.apply(b.tip);
-                        // point-segment distance
-                        Vec2 ab = bb - a, am = m - a;
+                        // point-segment distance (screen space = canvas viewport)
+                        Vec2 ab = bb - a, am = mLocal - a;
                         float tt = clampf(am.dot(ab) / (ab.len2() + 1e-6f), 0, 1);
-                        float d = Vec2::dist(a + ab * tt, m);
+                        float d = Vec2::dist(a + ab * tt, mLocal);
                         if (d < bestD) { bestD = d; best = (int)(&b - &bw[0]); }
                     }
                     selectedBone_ = best;
@@ -572,7 +608,7 @@ void Editor::handleCanvasInput(Ui& ui, int x, int y, int w, int h) {
         }
         if (cutDragging_) {
             Vec2 a = view_.worldToScreenPoint(cutDragStart_);
-            Vec2 b = view_.worldToScreenPoint(ui.mouse());
+            Vec2 b = view_.worldToScreenPoint(world); // current cursor in world
             fb_.strokeRect(x + (int)std::min(a.x, b.x), y + (int)std::min(a.y, b.y),
                            (int)std::fabs(b.x - a.x), (int)std::fabs(b.y - a.y),
                            Theme::get().accent, 2);
@@ -583,28 +619,29 @@ void Editor::handleCanvasInput(Ui& ui, int x, int y, int w, int h) {
 
 void Editor::commitStroke() {
     RasterLayer* rl = project_->activeRasterLayer();
-    if (!rl || rawStroke_.empty()) return;
+    if (!rl || rawStroke_.empty()) { liveValid_ = false; return; }
     Image& img = rl->ensureFrame(frame_);
     BrushSettings b = brush_;
     b.eraser = tool_ == Tool::Eraser;
     if (b.eraser) b.id = eraserId_;
-    // paint the stabilized stroke over the live-raw path
     auto smoothed = smoothStroke(rawStroke_, stabilizer_);
     IRect r1 = strokeBounds(rawStroke_, b, img.w, img.h);
     IRect r2 = strokeBounds(smoothed, b, img.w, img.h);
     IRect r{std::min(r1.x0, r2.x0), std::min(r1.y0, r2.y0), std::max(r1.x1, r2.x1), std::max(r1.y1, r2.y1)};
-    if (r.x1 < r.x0) return;
-    Image after = img;
-    engine_.paintStroke(after, smoothed, b);
-    // diff region command
+    if (r.x1 < r.x0) { liveValid_ = false; return; }
+    // The live preview already painted the exact final path into the layer —
+    // commit only records the undo command. blitReplace (not blit!) so an
+    // erase can restore alpha=0 pixels: source-over blit skips transparent
+    // source pixels, which used to make erasing and undoing erases no-ops.
     Image beforeCrop = strokeSnapshot_.crop(r.x0, r.y0, r.x1 - r.x0 + 1, r.y1 - r.y0 + 1);
-    Image afterCrop = after.crop(r.x0, r.y0, r.x1 - r.x0 + 1, r.y1 - r.y0 + 1);
+    Image afterCrop = img.crop(r.x0, r.y0, r.x1 - r.x0 + 1, r.y1 - r.y0 + 1);
     Image* framePtr = &rl->ensureFrame(frame_);
     int fx = r.x0, fy = r.y0;
-    project_->commands.push(std::make_unique<FuncCommand>(
+    project_->commands.pushExecuted(std::make_unique<FuncCommand>(
         b.eraser ? "erase" : "paint",
-        [framePtr, beforeCrop, fx, fy]() { framePtr->blit(beforeCrop, fx, fy, 1.0f); },
-        [framePtr, afterCrop, fx, fy]() { framePtr->blit(afterCrop, fx, fy, 1.0f); }));
+        [framePtr, beforeCrop, fx, fy]() { framePtr->blitReplace(beforeCrop, fx, fy); },
+        [framePtr, afterCrop, fx, fy]() { framePtr->blitReplace(afterCrop, fx, fy); }));
+    liveValid_ = false;
 }
 
 Character* Editor::activeCharacter() {

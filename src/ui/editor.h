@@ -83,6 +83,11 @@ private:
     std::vector<Vec2> rawStroke_;
     bool stroking_ = false;
     Image strokeSnapshot_;
+    // live-preview bookkeeping: region of the layer the in-progress stroke
+    // currently occupies (restored from the snapshot each frame so the
+    // smoothed path is repainted over a clean base — no flow buildup)
+    IRect liveBounds_{0, 0, -1, -1};
+    bool liveValid_ = false;
 
     // rig editing
     std::string selectedCharacter_; // character id
